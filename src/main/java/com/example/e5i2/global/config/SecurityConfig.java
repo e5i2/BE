@@ -3,6 +3,7 @@ package com.example.e5i2.global.config;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
@@ -13,6 +14,7 @@ import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+import org.springframework.web.cors.CorsUtils;
 
 import java.util.Arrays;
 import java.util.Collections;
@@ -25,18 +27,23 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
+            // 1. CORS 설정을 가장 먼저 적용합니다.
+            .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+
             .csrf(AbstractHttpConfigurer::disable)
             .formLogin(AbstractHttpConfigurer::disable)
             .httpBasic(AbstractHttpConfigurer::disable)
-            .sessionManagement(sessionManagement ->
-                sessionManagement.sessionCreationPolicy(SessionCreationPolicy.STATELESS)
+
+            .sessionManagement(session ->
+                session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)
             )
-            .authorizeHttpRequests(authorizeRequests ->
-                authorizeRequests
-                    .anyRequest().permitAll() // 모든 요청 허용 (OPTIONS 포함)
-            )
-            // .cors() 설정을 FilterChain 상단에 명시적으로 적용
-            .cors(cors -> cors.configurationSource(corsConfigurationSource()));
+
+            .authorizeHttpRequests(auth -> auth
+                // 2. [핵심] Preflight(OPTIONS) 요청은 보안 필터를 거치지 않고 무조건 허용합니다.
+                // 이 설정이 없으면 OPTIONS 요청에 대해 302 리다이렉트가 발생할 수 있습니다.
+                .requestMatchers(CorsUtils::isPreFlightRequest).permitAll()
+                .anyRequest().permitAll()
+            );
 
         return http.build();
     }
@@ -50,23 +57,21 @@ public class SecurityConfig {
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
 
-        // 1. [중요] "*" 대신 패턴 사용
-        // AllowCredentials(true)를 쓰려면 Origins에 "*"를 쓸 수 없기에 패턴을 사용합니다.
+        // 1. [중요] Credentials가 true일 때는 패턴을 사용하는 것이 안전합니다.
         configuration.setAllowedOriginPatterns(Collections.singletonList("*"));
 
-        // 2. [중요] 메서드 명시
-        // OPTIONS가 누락되면 Preflight 요청 시 리다이렉트 에러가 날 수 있습니다.
+        // 2. [중요] OPTIONS 메서드를 명시적으로 포함합니다.
         configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
 
-        // 3. 헤더 설정
-        configuration.setAllowedHeaders(Arrays.asList("Authorization", "Content-Type", "x-requested-with"));
+        // 3. 브라우저가 보낼 수 있는 헤더를 구체적으로 지정하거나 모두 허용합니다.
+        configuration.setAllowedHeaders(Arrays.asList("Authorization", "Content-Type", "x-requested-with", "Cache-Control"));
         configuration.setExposedHeaders(Collections.singletonList("*"));
 
-        // 4. [중요] 인증 정보 허용
-        // 브라우저가 쿠키나 인증 헤더를 안전하게 보낼 수 있도록 허용합니다.
+        // 4. [중요] 인증 정보(쿠키, 헤더 등)를 허용합니다.
+        // 프론트에서 credentials: 'include' 옵션을 쓸 경우 필수입니다.
         configuration.setAllowCredentials(true);
 
-        // 5. 브라우저에 CORS 응답을 캐싱할 시간 설정 (Preflight 최적화)
+        // 5. 예비 요청 결과를 브라우저에 캐싱하여 성능을 높입니다.
         configuration.setMaxAge(3600L);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();

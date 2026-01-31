@@ -42,17 +42,7 @@ jobs:
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
 
-      # 4. docker-compose.yml 파일을 EC2로 전송 (SCP)
-      - name: Copy docker-compose.yml to EC2
-        uses: appleboy/scp-action@master
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ec2-user
-          key: ${{ secrets.EC2_SSH_KEY }}
-          source: "docker-compose.yml"
-          target: "/home/ec2-user/"
-
-      # 5. 보안 그룹 제어 및 SSH 배포
+      # 4. [중요] 보안 그룹 열기 (Runner IP 허용)
       - name: Get Runner IP
         id: ip
         run: echo "ipv4=$(curl -s https://ifconfig.me)" >> $GITHUB_OUTPUT
@@ -64,6 +54,17 @@ jobs:
             --protocol tcp --port 22 \
             --cidr ${{ steps.ip.outputs.ipv4 }}/32
 
+      # 5. 이제 안전하게 파일 전송 (SCP)
+      - name: Copy docker-compose.yml to EC2
+        uses: appleboy/scp-action@master
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+          source: "docker-compose.yml"
+          target: "/home/ec2-user/"
+
+      # 6. SSH 접속 후 배포 명령어 실행
       - name: SSH Deploy
         uses: appleboy/ssh-action@master
         env:
@@ -77,5 +78,23 @@ jobs:
             # ECR 로그인
             aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin $ECR_REGISTRY
             
-            # EC2 이동
-            cd /home
+            # 작업 디렉토리 이동
+            cd /home/ec2-user
+            
+            # 기존 컨테이너 종료 및 최신 이미지 풀
+            docker-compose pull
+            
+            # 새 컨테이너 실행
+            docker-compose up -d
+            
+            # 안쓰는 이미지 정리
+            docker image prune -f
+
+      # 7. [중요] 배포 후 보안 그룹 닫기 (실패해도 실행되도록 always() 사용)
+      - name: Revoke Runner IP from Security Group
+        if: always()
+        run: |
+          aws ec2 revoke-security-group-ingress \
+            --group-id ${{ secrets.AWS_SG_ID }} \
+            --protocol tcp --port 22 \
+            --cidr ${{ steps.ip.outputs.ipv4 }}/32

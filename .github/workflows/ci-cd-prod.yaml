@@ -1,4 +1,4 @@
-name: Deploy to EC2 with ECR
+name: Deploy to EC2 with Docker Compose
 
 on:
   push:
@@ -21,7 +21,7 @@ jobs:
       - name: Build with Gradle
         run: ./gradlew build -x test
 
-      # 2. AWS 인증 (이 단계에서 얻은 권한으로 보안 그룹도 제어합니다)
+      # 2. AWS 인증
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -42,7 +42,17 @@ jobs:
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
 
-      # [수정] 4-1. GitHub Runner IP 확인 및 보안 그룹 22번 포트 열기
+      # 4. docker-compose.yml 파일을 EC2로 전송 (SCP)
+      - name: Copy docker-compose.yml to EC2
+        uses: appleboy/scp-action@master
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+          source: "docker-compose.yml"
+          target: "/home/ec2-user/"
+
+      # 5. 보안 그룹 제어 및 SSH 배포
       - name: Get Runner IP
         id: ip
         run: echo "ipv4=$(curl -s https://ifconfig.me)" >> $GITHUB_OUTPUT
@@ -54,27 +64,18 @@ jobs:
             --protocol tcp --port 22 \
             --cidr ${{ steps.ip.outputs.ipv4 }}/32
 
-      # 4-2. EC2에서 새 컨테이너 실행 (SSH 접속)
       - name: SSH Deploy
         uses: appleboy/ssh-action@master
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ec2-user
           key: ${{ secrets.EC2_SSH_KEY }}
+          envs: ECR_REGISTRY
           script: |
-            aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin ${{ steps.login-ecr.outputs.registry }}
-            docker pull ${{ steps.login-ecr.outputs.registry }}/test-app:latest
-            docker stop my-app || true
-            docker rm my-app || true
-            docker run -d --name my-app -p 8080:8080 \
-              -e DB_PASSWORD=${{ secrets.DB_PASSWORD }} \
-              ${{ steps.login-ecr.outputs.registry }}/test-app:latest
-
-      # [수정] 4-3. 배포 성공/실패 여부와 관계없이 22번 포트 다시 닫기
-      - name: Revoke Runner IP from Security Group
-        if: always()
-        run: |
-          aws ec2 revoke-security-group-ingress \
-            --group-id ${{ secrets.AWS_SG_ID }} \
-            --protocol tcp --port 22 \
-            --cidr ${{ steps.ip.outputs.ipv4 }}/32
+            # ECR 로그인
+            aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin $ECR_REGISTRY
+            
+            # EC2 이동
+            cd /home

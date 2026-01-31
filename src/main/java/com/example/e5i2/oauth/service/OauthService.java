@@ -94,6 +94,7 @@ public class OauthService {
         TokenResponse tokenResponse = getTokenResponse(user.getId());
         log.info("✅ 회원 가입이 정상적으로 처리되었습니다. 회원 ID: {}", user.getId());
         return SignupResponse.builder()
+                .userId(user.getId())
                 .email(signupRequest.email())
                 .nickname(signupRequest.nickname())
                 .gender(signupRequest.gender())

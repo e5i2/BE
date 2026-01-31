@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   app:
-    image: ${ECR_REGISTRY}/test-app:latest # GitHub Actions에서 빌드된 이미지를 사용하도록 수정
+    image: ${ECR_REGISTRY}/test-app:latest
     container_name: tripus-be
     platform: linux/amd64
     ports:
@@ -13,7 +13,6 @@ services:
     env_file:
       - .env
     environment:
-      # .env의 값을 스프링 부트가 인식하는 환경변수명으로 명시적 매핑
       SPRING_DATASOURCE_URL: ${SPRING_DATASOURCE_URL}
       SPRING_DATASOURCE_USERNAME: ${SPRING_DATASOURCE_USERNAME}
       SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD}

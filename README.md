@@ -1,2 +1,2 @@
 # BE
-BE Repository
+![Architecture](architecture.png)
